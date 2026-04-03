@@ -11,7 +11,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 OUTPUT_PATH = Path(__file__).resolve().parent / "office_task_tracker.xlsx"
 
 MAX_TASK_ROWS = 200
-MAX_CONTACT_ROWS = 120
+INITIAL_CONTACT_ROWS = 120
+EXCEL_MAX_ROWS = 1048576
 
 TASKS_SHEET_NAME = "Задачи"
 SUMMARY_SHEET_NAME = "Сводка"
@@ -28,7 +29,6 @@ CATEGORIES = [
 ]
 PRIORITIES = ["Низкий", "Средний", "Высокий"]
 STATUSES = ["Новая", "В работе", "На паузе", "Выполнено"]
-EMPLOYEES = [f"Сотрудник {index}" for index in range(1, 6)]
 
 TASK_HEADERS = [
     "ID",
@@ -53,9 +53,10 @@ TASK_FIRST_DATA_ROW = 3
 TASK_LAST_DATA_ROW = TASK_FIRST_DATA_ROW + MAX_TASK_ROWS - 1
 
 CONTACTS_TITLE_ROW = 1
-CONTACTS_HEADER_ROW = 2
-CONTACTS_FIRST_DATA_ROW = 3
-CONTACTS_LAST_DATA_ROW = CONTACTS_FIRST_DATA_ROW + MAX_CONTACT_ROWS - 1
+CONTACTS_NOTE_ROW = 2
+CONTACTS_HEADER_ROW = 3
+CONTACTS_FIRST_DATA_ROW = 4
+CONTACTS_LAST_TEMPLATE_ROW = CONTACTS_FIRST_DATA_ROW + INITIAL_CONTACT_ROWS - 1
 
 SETTINGS_TITLE_ROW = 1
 SETTINGS_HEADER_ROW = 2
@@ -107,13 +108,18 @@ def column_widths_xml(
     widths: list[float],
     *,
     hidden_columns: set[int] | None = None,
+    column_styles: dict[int, int] | None = None,
 ) -> str:
     hidden_columns = hidden_columns or set()
+    column_styles = column_styles or {}
     columns = []
     for index, width in enumerate(widths, start=1):
         hidden_attr = ' hidden="1"' if index in hidden_columns else ""
+        style_attr = (
+            f' style="{column_styles[index]}"' if index in column_styles else ""
+        )
         columns.append(
-            f'<col min="{index}" max="{index}" width="{width}" customWidth="1"{hidden_attr}/>'
+            f'<col min="{index}" max="{index}" width="{width}" customWidth="1"{hidden_attr}{style_attr}/>'
         )
     return "".join(columns)
 
@@ -154,6 +160,16 @@ def build_status_conditional_formatting(start_row: int, end_row: int) -> str:
     </cfRule>
   </conditionalFormatting>
 """.strip()
+
+
+def build_contact_names_defined_name() -> str:
+    contacts_sheet = quoted_sheet_name(CONTACTS_SHEET_NAME)
+    return (
+        f"{contacts_sheet}!$A${CONTACTS_FIRST_DATA_ROW}:INDEX({contacts_sheet}!$A:$A,"
+        f"IFERROR(LOOKUP(2,1/(NOT(ISBLANK({contacts_sheet}!$A${CONTACTS_FIRST_DATA_ROW}:"
+        f"$A${EXCEL_MAX_ROWS}))),ROW({contacts_sheet}!$A${CONTACTS_FIRST_DATA_ROW}:"
+        f"$A${EXCEL_MAX_ROWS})),{CONTACTS_FIRST_DATA_ROW}))"
+    )
 
 
 def build_tasks_sheet() -> str:
@@ -221,7 +237,7 @@ def build_tasks_sheet() -> str:
       <formula1>task_categories</formula1>
     </dataValidation>
     <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="E{TASK_FIRST_DATA_ROW}:E{TASK_LAST_DATA_ROW}">
-      <formula1>task_employees</formula1>
+      <formula1>contact_names</formula1>
     </dataValidation>
     <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="F{TASK_FIRST_DATA_ROW}:F{TASK_LAST_DATA_ROW}">
       <formula1>task_priorities</formula1>
@@ -324,8 +340,8 @@ def build_summary_sheet() -> str:
                 inline_string_cell(
                     "A2",
                     (
-                        "Лист помогает контролировать личные задачи: ответственных можно указывать "
-                        "в основной таблице, но работа ведется из одной вкладки."
+                        "Лист помогает контролировать личные задачи: ответственных выбирайте "
+                        "из вкладки «Контакты», а работать можно из одной основной таблицы."
                     ),
                     6,
                 ),
@@ -393,6 +409,23 @@ def build_contacts_sheet() -> str:
             height=28,
         ),
         row_xml(
+            CONTACTS_NOTE_ROW,
+            [
+                inline_string_cell(
+                    "A2",
+                    (
+                        "Добавляйте новые строки ниже: список для поля «Ответственный» "
+                        "обновляется автоматически."
+                    ),
+                    6,
+                ),
+                blank_cell("B2", 6),
+                blank_cell("C2", 6),
+            ],
+            "1:3",
+            height=24,
+        ),
+        row_xml(
             CONTACTS_HEADER_ROW,
             [
                 inline_string_cell(f"{column}{CONTACTS_HEADER_ROW}", header, 1)
@@ -403,7 +436,7 @@ def build_contacts_sheet() -> str:
         ),
     ]
 
-    for row_number in range(CONTACTS_FIRST_DATA_ROW, CONTACTS_LAST_DATA_ROW + 1):
+    for row_number in range(CONTACTS_FIRST_DATA_ROW, CONTACTS_LAST_TEMPLATE_ROW + 1):
         rows.append(
             row_xml(
                 row_number,
@@ -419,7 +452,7 @@ def build_contacts_sheet() -> str:
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   {sheet_pr_xml("FF70AD47")}
-  <dimension ref="A1:C{CONTACTS_LAST_DATA_ROW}"/>
+  <dimension ref="A1:C{CONTACTS_LAST_TEMPLATE_ROW}"/>
   <sheetViews>
     <sheetView workbookViewId="0">
       <pane ySplit="2" topLeftCell="A{CONTACTS_FIRST_DATA_ROW}" activePane="bottomLeft" state="frozen"/>
@@ -427,10 +460,10 @@ def build_contacts_sheet() -> str:
     </sheetView>
   </sheetViews>
   <sheetFormatPr defaultRowHeight="20"/>
-  <cols>{column_widths_xml(CONTACT_COLUMN_WIDTHS)}</cols>
+  <cols>{column_widths_xml(CONTACT_COLUMN_WIDTHS, column_styles={1: 2, 2: 4, 3: 2})}</cols>
   <sheetData>{''.join(rows)}</sheetData>
-  <autoFilter ref="A{CONTACTS_HEADER_ROW}:C{CONTACTS_LAST_DATA_ROW}"/>
-  {merge_cells_xml(["A1:C1"])}
+  <autoFilter ref="A{CONTACTS_HEADER_ROW}:C{EXCEL_MAX_ROWS}"/>
+  {merge_cells_xml(["A1:C1", "A2:C2"])}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -444,9 +477,8 @@ def build_settings_sheet() -> str:
                 inline_string_cell("A1", "Настройки и справочники", 5),
                 blank_cell("B1", 5),
                 blank_cell("C1", 5),
-                blank_cell("D1", 5),
             ],
-            "1:4",
+            "1:3",
             height=28,
         ),
         row_xml(
@@ -455,14 +487,13 @@ def build_settings_sheet() -> str:
                 inline_string_cell("A2", "Категории", 1),
                 inline_string_cell("B2", "Приоритеты", 1),
                 inline_string_cell("C2", "Статусы", 1),
-                inline_string_cell("D2", "Сотрудники", 1),
             ],
-            "1:4",
+            "1:3",
             height=22,
         ),
     ]
 
-    max_items = max(len(CATEGORIES), len(PRIORITIES), len(STATUSES), len(EMPLOYEES))
+    max_items = max(len(CATEGORIES), len(PRIORITIES), len(STATUSES))
     for offset in range(max_items):
         row_number = SETTINGS_FIRST_ITEM_ROW + offset
         cells = [
@@ -481,19 +512,14 @@ def build_settings_sheet() -> str:
                 if offset < len(STATUSES)
                 else blank_cell(f"C{row_number}", 4)
             ),
-            (
-                inline_string_cell(f"D{row_number}", EMPLOYEES[offset], 2)
-                if offset < len(EMPLOYEES)
-                else blank_cell(f"D{row_number}", 2)
-            ),
         ]
-        rows.append(row_xml(row_number, cells, "1:4"))
+        rows.append(row_xml(row_number, cells, "1:3"))
 
     last_row = SETTINGS_FIRST_ITEM_ROW + max_items - 1
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   {sheet_pr_xml("FF7F7F7F")}
-  <dimension ref="A1:D{last_row}"/>
+  <dimension ref="A1:C{last_row}"/>
   <sheetViews>
     <sheetView workbookViewId="0">
       <pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>
@@ -501,10 +527,10 @@ def build_settings_sheet() -> str:
     </sheetView>
   </sheetViews>
   <sheetFormatPr defaultRowHeight="20"/>
-  <cols>{column_widths_xml([24, 14, 16, 20])}</cols>
+  <cols>{column_widths_xml([24, 14, 16])}</cols>
   <sheetData>{''.join(rows)}</sheetData>
-  <autoFilter ref="A2:D{last_row}"/>
-  {merge_cells_xml(["A1:D1"])}
+  <autoFilter ref="A2:C{last_row}"/>
+  {merge_cells_xml(["A1:C1"])}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -714,7 +740,7 @@ def build_workbook(sheet_names: list[str]) -> str:
     <definedName name="task_categories">{settings_sheet}!$A${SETTINGS_FIRST_ITEM_ROW}:$A${SETTINGS_FIRST_ITEM_ROW + len(CATEGORIES) - 1}</definedName>
     <definedName name="task_priorities">{settings_sheet}!$B${SETTINGS_FIRST_ITEM_ROW}:$B${SETTINGS_FIRST_ITEM_ROW + len(PRIORITIES) - 1}</definedName>
     <definedName name="task_statuses">{settings_sheet}!$C${SETTINGS_FIRST_ITEM_ROW}:$C${SETTINGS_FIRST_ITEM_ROW + len(STATUSES) - 1}</definedName>
-    <definedName name="task_employees">{settings_sheet}!$D${SETTINGS_FIRST_ITEM_ROW}:$D${SETTINGS_FIRST_ITEM_ROW + len(EMPLOYEES) - 1}</definedName>
+    <definedName name="contact_names">{build_contact_names_defined_name()}</definedName>
   </definedNames>
   <calcPr calcId="171027" fullCalcOnLoad="1"/>
 </workbook>
