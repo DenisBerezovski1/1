@@ -11,7 +11,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 OUTPUT_PATH = Path(__file__).resolve().parent / "office_task_tracker.xlsx"
 
 MAX_TASK_ROWS = 200
-MAX_EMPLOYEE_VIEW_ROWS = 100
 
 TASKS_SHEET_NAME = "Задачи"
 SUMMARY_SHEET_NAME = "Сводка"
@@ -28,14 +27,6 @@ CATEGORIES = [
 PRIORITIES = ["Низкий", "Средний", "Высокий"]
 STATUSES = ["Новая", "В работе", "На паузе", "Выполнено"]
 EMPLOYEES = [f"Сотрудник {index}" for index in range(1, 6)]
-EMPLOYEE_SHEET_NAMES = [f"Сотрудник {index}" for index in range(1, len(EMPLOYEES) + 1)]
-EMPLOYEE_TAB_COLORS = [
-    "FF70AD47",
-    "FF5B9BD5",
-    "FFFFC000",
-    "FFED7D31",
-    "FF8064A2",
-]
 
 TASK_HEADERS = [
     "ID",
@@ -60,12 +51,6 @@ TASK_LAST_DATA_ROW = TASK_FIRST_DATA_ROW + MAX_TASK_ROWS - 1
 SETTINGS_TITLE_ROW = 1
 SETTINGS_HEADER_ROW = 2
 SETTINGS_FIRST_ITEM_ROW = 3
-
-EMPLOYEE_INFO_ROW = 1
-EMPLOYEE_NOTE_ROW = 2
-EMPLOYEE_HEADER_ROW = 4
-EMPLOYEE_FIRST_DATA_ROW = 5
-EMPLOYEE_LAST_DATA_ROW = EMPLOYEE_FIRST_DATA_ROW + MAX_EMPLOYEE_VIEW_ROWS - 1
 
 
 def quoted_sheet_name(sheet_name: str) -> str:
@@ -262,7 +247,6 @@ def build_tasks_sheet() -> str:
 
 def build_summary_sheet() -> str:
     tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
-    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
     metrics = [
         (
             "Всего задач",
@@ -299,6 +283,20 @@ def build_summary_sheet() -> str:
                 f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"<>Выполнено")'
             ),
         ),
+        (
+            "Назначено другим",
+            (
+                f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},"<>",'
+                f'{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>")'
+            ),
+        ),
+        (
+            "Без ответственного",
+            (
+                f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},"",'
+                f'{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>")'
+            ),
+        ),
     ]
 
     rows = [
@@ -306,9 +304,9 @@ def build_summary_sheet() -> str:
             1,
             [
                 inline_string_cell("A1", "Сводка по задачам", 5),
-                *[blank_cell(f"{column}1", 5) for column in "BCDEFG"],
+                blank_cell("B1", 5),
             ],
-            "1:7",
+            "1:2",
             height=28,
         ),
         row_xml(
@@ -316,12 +314,15 @@ def build_summary_sheet() -> str:
             [
                 inline_string_cell(
                     "A2",
-                    "Редактируйте список сотрудников на вкладке «Настройки», и показатели пересчитаются автоматически.",
+                    (
+                        "Лист помогает контролировать личные задачи: ответственных можно указывать "
+                        "в основной таблице, но работа ведется из одной вкладки."
+                    ),
                     6,
                 ),
-                *[blank_cell(f"{column}2", 6) for column in "BCDEFG"],
+                blank_cell("B2", 6),
             ],
-            "1:7",
+            "1:2",
             height=24,
         ),
         row_xml(
@@ -329,84 +330,32 @@ def build_summary_sheet() -> str:
             [
                 inline_string_cell("A3", "Показатель", 1),
                 inline_string_cell("B3", "Значение", 1),
-                blank_cell("C3"),
-                inline_string_cell("D3", "Сотрудник", 1),
-                inline_string_cell("E3", "Всего", 1),
-                inline_string_cell("F3", "В работе", 1),
-                inline_string_cell("G3", "Просрочено", 1),
             ],
-            "1:7",
+            "1:2",
             height=22,
         ),
     ]
 
-    table_height = max(len(metrics), len(EMPLOYEES))
+    table_height = len(metrics)
     for offset in range(table_height):
         row_number = 4 + offset
-        cells = []
-        if offset < len(metrics):
-            label, formula = metrics[offset]
-            cells.append(inline_string_cell(f"A{row_number}", label, 6))
-            cells.append(formula_cell(f"B{row_number}", formula, 7))
-        else:
-            cells.append(blank_cell(f"A{row_number}"))
-            cells.append(blank_cell(f"B{row_number}"))
-
-        cells.append(blank_cell(f"C{row_number}"))
-
-        if offset < len(EMPLOYEES):
-            settings_row = SETTINGS_FIRST_ITEM_ROW + offset
-            cells.extend(
+        label, formula = metrics[offset]
+        rows.append(
+            row_xml(
+                row_number,
                 [
-                    formula_cell(
-                        f"D{row_number}",
-                        f"{settings_sheet}!$D${settings_row}",
-                        2,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"E{row_number}",
-                        (
-                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
-                            f'D{row_number},{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>")'
-                        ),
-                        7,
-                    ),
-                    formula_cell(
-                        f"F{row_number}",
-                        (
-                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
-                            f'D{row_number},{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"В работе")'
-                        ),
-                        7,
-                    ),
-                    formula_cell(
-                        f"G{row_number}",
-                        (
-                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
-                            f'D{row_number},{tasks_sheet}!$J${TASK_FIRST_DATA_ROW}:$J${TASK_LAST_DATA_ROW},"Да")'
-                        ),
-                        7,
-                    ),
-                ]
+                    inline_string_cell(f"A{row_number}", label, 6),
+                    formula_cell(f"B{row_number}", formula, 7),
+                ],
+                "1:2",
             )
-        else:
-            cells.extend(
-                [
-                    blank_cell(f"D{row_number}"),
-                    blank_cell(f"E{row_number}"),
-                    blank_cell(f"F{row_number}"),
-                    blank_cell(f"G{row_number}"),
-                ]
-            )
-
-        rows.append(row_xml(row_number, cells, "1:7"))
+        )
 
     last_row = 3 + table_height
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   {sheet_pr_xml("FF8064A2")}
-  <dimension ref="A1:G{last_row}"/>
+  <dimension ref="A1:B{last_row}"/>
   <sheetViews>
     <sheetView workbookViewId="0">
       <pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/>
@@ -414,9 +363,9 @@ def build_summary_sheet() -> str:
     </sheetView>
   </sheetViews>
   <sheetFormatPr defaultRowHeight="20"/>
-  <cols>{column_widths_xml([24, 14, 3, 20, 12, 14, 12])}</cols>
+  <cols>{column_widths_xml([28, 16])}</cols>
   <sheetData>{''.join(rows)}</sheetData>
-  {merge_cells_xml(["A1:G1", "A2:G2"])}
+  {merge_cells_xml(["A1:B1", "A2:B2"])}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -491,174 +440,6 @@ def build_settings_sheet() -> str:
   <sheetData>{''.join(rows)}</sheetData>
   <autoFilter ref="A2:D{last_row}"/>
   {merge_cells_xml(["A1:D1"])}
-  <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
-</worksheet>
-"""
-
-
-def employee_source_row_formula(row_number: int) -> str:
-    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
-    return (
-        f'IFERROR(AGGREGATE(15,6,ROW({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW})/'
-        f'(({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW}=$B$1)'
-        f'*({tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW}<>"")),'
-        f'ROWS($L${EMPLOYEE_FIRST_DATA_ROW}:L{row_number})),"")'
-    )
-
-
-def employee_task_formula(row_number: int, column_letter: str) -> str:
-    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
-    return (
-        f'IF($L{row_number}="","",INDEX({tasks_sheet}!${column_letter}:${column_letter},$L{row_number}))'
-    )
-
-
-def build_employee_sheet(sheet_index: int) -> str:
-    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
-    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
-    employee_settings_row = SETTINGS_FIRST_ITEM_ROW + sheet_index
-    instruction = (
-        "Лист автоматически показывает задачи из вкладки "
-        "«Задачи» по полю «Ответственный»."
-    )
-
-    rows = [
-        row_xml(
-            EMPLOYEE_INFO_ROW,
-            [
-                inline_string_cell("A1", "Сотрудник", 6),
-                formula_cell("B1", f"{settings_sheet}!$D${employee_settings_row}", 7, cell_type="str"),
-                blank_cell("C1", 7),
-                inline_string_cell("D1", "Активных задач", 6),
-                formula_cell(
-                    "E1",
-                    (
-                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
-                        f'{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>",'
-                        f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"<>Выполнено")'
-                    ),
-                    7,
-                ),
-                blank_cell("F1"),
-                inline_string_cell("G1", "Просрочено", 6),
-                formula_cell(
-                    "H1",
-                    (
-                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
-                        f'{tasks_sheet}!$J${TASK_FIRST_DATA_ROW}:$J${TASK_LAST_DATA_ROW},"Да")'
-                    ),
-                    7,
-                ),
-                blank_cell("I1"),
-                inline_string_cell("J1", "Выполнено", 6),
-                formula_cell(
-                    "K1",
-                    (
-                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
-                        f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"Выполнено")'
-                    ),
-                    7,
-                ),
-                blank_cell("L1"),
-            ],
-            "1:12",
-            height=24,
-        ),
-        row_xml(
-            EMPLOYEE_NOTE_ROW,
-            [
-                inline_string_cell("A2", instruction, 6),
-                *[blank_cell(f"{column}2", 6) for column in "BCDEFGHIJK"],
-                blank_cell("L2"),
-            ],
-            "1:12",
-            height=24,
-        ),
-        row_xml(3, [], "1:12", height=8),
-        row_xml(
-            EMPLOYEE_HEADER_ROW,
-            [
-                inline_string_cell(f"{column}{EMPLOYEE_HEADER_ROW}", header, 1)
-                for column, header in zip("ABCDEFGHIJK", TASK_HEADERS)
-            ],
-            "1:12",
-            height=22,
-        ),
-    ]
-
-    for row_number in range(EMPLOYEE_FIRST_DATA_ROW, EMPLOYEE_LAST_DATA_ROW + 1):
-        rows.append(
-            row_xml(
-                row_number,
-                [
-                    formula_cell(f"A{row_number}", employee_task_formula(row_number, "A"), 4),
-                    formula_cell(f"B{row_number}", employee_task_formula(row_number, "B"), 3),
-                    formula_cell(
-                        f"C{row_number}",
-                        employee_task_formula(row_number, "C"),
-                        2,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"D{row_number}",
-                        employee_task_formula(row_number, "D"),
-                        2,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"E{row_number}",
-                        employee_task_formula(row_number, "E"),
-                        2,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"F{row_number}",
-                        employee_task_formula(row_number, "F"),
-                        4,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"G{row_number}",
-                        employee_task_formula(row_number, "G"),
-                        4,
-                        cell_type="str",
-                    ),
-                    formula_cell(f"H{row_number}", employee_task_formula(row_number, "H"), 3),
-                    formula_cell(f"I{row_number}", employee_task_formula(row_number, "I"), 4),
-                    formula_cell(
-                        f"J{row_number}",
-                        employee_task_formula(row_number, "J"),
-                        4,
-                        cell_type="str",
-                    ),
-                    formula_cell(
-                        f"K{row_number}",
-                        employee_task_formula(row_number, "K"),
-                        2,
-                        cell_type="str",
-                    ),
-                    formula_cell(f"L{row_number}", employee_source_row_formula(row_number)),
-                ],
-                "1:12",
-            )
-        )
-
-    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  {sheet_pr_xml(EMPLOYEE_TAB_COLORS[sheet_index % len(EMPLOYEE_TAB_COLORS)])}
-  <dimension ref="A1:L{EMPLOYEE_LAST_DATA_ROW}"/>
-  <sheetViews>
-    <sheetView workbookViewId="0">
-      <pane ySplit="4" topLeftCell="A{EMPLOYEE_FIRST_DATA_ROW}" activePane="bottomLeft" state="frozen"/>
-      <selection pane="bottomLeft" activeCell="A{EMPLOYEE_FIRST_DATA_ROW}" sqref="A{EMPLOYEE_FIRST_DATA_ROW}"/>
-    </sheetView>
-  </sheetViews>
-  <sheetFormatPr defaultRowHeight="20"/>
-  <cols>{column_widths_xml(TASK_COLUMN_WIDTHS + [4], hidden_columns={12})}</cols>
-  <sheetData>{''.join(rows)}</sheetData>
-  <autoFilter ref="A{EMPLOYEE_HEADER_ROW}:K{EMPLOYEE_LAST_DATA_ROW}"/>
-  {merge_cells_xml(["B1:C1", "A2:K2"])}
-  {build_status_conditional_formatting(EMPLOYEE_FIRST_DATA_ROW, EMPLOYEE_LAST_DATA_ROW)}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -947,13 +728,11 @@ def write_workbook(output_path: Path) -> None:
         TASKS_SHEET_NAME,
         SUMMARY_SHEET_NAME,
         SETTINGS_SHEET_NAME,
-        *EMPLOYEE_SHEET_NAMES,
     ]
     worksheets = [
         build_tasks_sheet(),
         build_summary_sheet(),
         build_settings_sheet(),
-        *[build_employee_sheet(index) for index in range(len(EMPLOYEE_SHEET_NAMES))],
     ]
 
     with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as workbook:
