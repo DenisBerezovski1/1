@@ -11,9 +11,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 OUTPUT_PATH = Path(__file__).resolve().parent / "office_task_tracker.xlsx"
 
 MAX_TASK_ROWS = 200
+MAX_CONTACT_ROWS = 120
 
 TASKS_SHEET_NAME = "Задачи"
 SUMMARY_SHEET_NAME = "Сводка"
+CONTACTS_SHEET_NAME = "Контакты"
 SETTINGS_SHEET_NAME = "Настройки"
 
 CATEGORIES = [
@@ -42,11 +44,18 @@ TASK_HEADERS = [
     "Комментарий",
 ]
 TASK_COLUMN_WIDTHS = [8, 16, 40, 18, 20, 12, 14, 14, 14, 12, 32]
+CONTACT_HEADERS = ["ФИО", "Номер телефона", "Почтовый адрес"]
+CONTACT_COLUMN_WIDTHS = [28, 20, 42]
 
 TASK_TITLE_ROW = 1
 TASK_HEADER_ROW = 2
 TASK_FIRST_DATA_ROW = 3
 TASK_LAST_DATA_ROW = TASK_FIRST_DATA_ROW + MAX_TASK_ROWS - 1
+
+CONTACTS_TITLE_ROW = 1
+CONTACTS_HEADER_ROW = 2
+CONTACTS_FIRST_DATA_ROW = 3
+CONTACTS_LAST_DATA_ROW = CONTACTS_FIRST_DATA_ROW + MAX_CONTACT_ROWS - 1
 
 SETTINGS_TITLE_ROW = 1
 SETTINGS_HEADER_ROW = 2
@@ -366,6 +375,62 @@ def build_summary_sheet() -> str:
   <cols>{column_widths_xml([28, 16])}</cols>
   <sheetData>{''.join(rows)}</sheetData>
   {merge_cells_xml(["A1:B1", "A2:B2"])}
+  <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
+</worksheet>
+"""
+
+
+def build_contacts_sheet() -> str:
+    rows = [
+        row_xml(
+            CONTACTS_TITLE_ROW,
+            [
+                inline_string_cell("A1", "Контакты для рабочих взаимодействий", 5),
+                blank_cell("B1", 5),
+                blank_cell("C1", 5),
+            ],
+            "1:3",
+            height=28,
+        ),
+        row_xml(
+            CONTACTS_HEADER_ROW,
+            [
+                inline_string_cell(f"{column}{CONTACTS_HEADER_ROW}", header, 1)
+                for column, header in zip("ABC", CONTACT_HEADERS)
+            ],
+            "1:3",
+            height=22,
+        ),
+    ]
+
+    for row_number in range(CONTACTS_FIRST_DATA_ROW, CONTACTS_LAST_DATA_ROW + 1):
+        rows.append(
+            row_xml(
+                row_number,
+                [
+                    blank_cell(f"A{row_number}", 2),
+                    blank_cell(f"B{row_number}", 4),
+                    blank_cell(f"C{row_number}", 2),
+                ],
+                "1:3",
+            )
+        )
+
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  {sheet_pr_xml("FF70AD47")}
+  <dimension ref="A1:C{CONTACTS_LAST_DATA_ROW}"/>
+  <sheetViews>
+    <sheetView workbookViewId="0">
+      <pane ySplit="2" topLeftCell="A{CONTACTS_FIRST_DATA_ROW}" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A{CONTACTS_FIRST_DATA_ROW}" sqref="A{CONTACTS_FIRST_DATA_ROW}"/>
+    </sheetView>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{column_widths_xml(CONTACT_COLUMN_WIDTHS)}</cols>
+  <sheetData>{''.join(rows)}</sheetData>
+  <autoFilter ref="A{CONTACTS_HEADER_ROW}:C{CONTACTS_LAST_DATA_ROW}"/>
+  {merge_cells_xml(["A1:C1"])}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -727,11 +792,13 @@ def write_workbook(output_path: Path) -> None:
     sheet_names = [
         TASKS_SHEET_NAME,
         SUMMARY_SHEET_NAME,
+        CONTACTS_SHEET_NAME,
         SETTINGS_SHEET_NAME,
     ]
     worksheets = [
         build_tasks_sheet(),
         build_summary_sheet(),
+        build_contacts_sheet(),
         build_settings_sheet(),
     ]
 
