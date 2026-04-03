@@ -20,11 +20,23 @@ CONTACTS_SHEET_NAME = "Контакты"
 SETTINGS_SHEET_NAME = "Настройки"
 
 CATEGORIES = [
-    "Документы",
-    "Закупки",
-    "Встречи",
-    "IT",
-    "Администрирование",
+    "Исполнительная документация",
+    "Акты скрытых работ",
+    "КС-2 / КС-3",
+    "Сметы и расчеты",
+    "Ведомости объемов работ",
+    "Договоры и допсоглашения",
+    "Согласования",
+    "Письма и деловая переписка",
+    "Графики производства работ",
+    "Поставки и материалы",
+    "Проектная документация",
+    "Рабочая документация",
+    "Замечания и предписания",
+    "Технические совещания",
+    "Заявки и закупки",
+    "Отчетность",
+    "Архив и реестры",
     "Прочее",
 ]
 PRIORITIES = ["Низкий", "Средний", "Высокий"]
@@ -169,6 +181,17 @@ def build_contact_names_defined_name() -> str:
         f"IFERROR(LOOKUP(2,1/(NOT(ISBLANK({contacts_sheet}!$A${CONTACTS_FIRST_DATA_ROW}:"
         f"$A${EXCEL_MAX_ROWS}))),ROW({contacts_sheet}!$A${CONTACTS_FIRST_DATA_ROW}:"
         f"$A${EXCEL_MAX_ROWS})),{CONTACTS_FIRST_DATA_ROW}))"
+    )
+
+
+def build_dynamic_settings_defined_name(column_letter: str, fallback_row: int) -> str:
+    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
+    return (
+        f"{settings_sheet}!${column_letter}${SETTINGS_FIRST_ITEM_ROW}:INDEX("
+        f"{settings_sheet}!${column_letter}:${column_letter},"
+        f"IFERROR(LOOKUP(2,1/(NOT(ISBLANK({settings_sheet}!${column_letter}${SETTINGS_FIRST_ITEM_ROW}:"
+        f"${column_letter}${EXCEL_MAX_ROWS}))),ROW({settings_sheet}!${column_letter}${SETTINGS_FIRST_ITEM_ROW}:"
+        f"${column_letter}${EXCEL_MAX_ROWS})),{fallback_row}))"
     )
 
 
@@ -723,7 +746,6 @@ def build_root_relationships() -> str:
 
 
 def build_workbook(sheet_names: list[str]) -> str:
-    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
     sheets_xml = "\n".join(
         f'    <sheet name="{escape(sheet_name)}" sheetId="{index}" r:id="rId{index}"/>'
         for index, sheet_name in enumerate(sheet_names, start=1)
@@ -737,9 +759,9 @@ def build_workbook(sheet_names: list[str]) -> str:
 {sheets_xml}
   </sheets>
   <definedNames>
-    <definedName name="task_categories">{settings_sheet}!$A${SETTINGS_FIRST_ITEM_ROW}:$A${SETTINGS_FIRST_ITEM_ROW + len(CATEGORIES) - 1}</definedName>
-    <definedName name="task_priorities">{settings_sheet}!$B${SETTINGS_FIRST_ITEM_ROW}:$B${SETTINGS_FIRST_ITEM_ROW + len(PRIORITIES) - 1}</definedName>
-    <definedName name="task_statuses">{settings_sheet}!$C${SETTINGS_FIRST_ITEM_ROW}:$C${SETTINGS_FIRST_ITEM_ROW + len(STATUSES) - 1}</definedName>
+    <definedName name="task_categories">{build_dynamic_settings_defined_name("A", SETTINGS_FIRST_ITEM_ROW)}</definedName>
+    <definedName name="task_priorities">{build_dynamic_settings_defined_name("B", SETTINGS_FIRST_ITEM_ROW)}</definedName>
+    <definedName name="task_statuses">{build_dynamic_settings_defined_name("C", SETTINGS_FIRST_ITEM_ROW)}</definedName>
     <definedName name="contact_names">{build_contact_names_defined_name()}</definedName>
   </definedNames>
   <calcPr calcId="171027" fullCalcOnLoad="1"/>
