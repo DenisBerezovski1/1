@@ -10,6 +10,13 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 OUTPUT_PATH = Path(__file__).resolve().parent / "office_task_tracker.xlsx"
 
+MAX_TASK_ROWS = 200
+MAX_EMPLOYEE_VIEW_ROWS = 100
+
+TASKS_SHEET_NAME = "Задачи"
+SUMMARY_SHEET_NAME = "Сводка"
+SETTINGS_SHEET_NAME = "Настройки"
+
 CATEGORIES = [
     "Документы",
     "Закупки",
@@ -18,9 +25,51 @@ CATEGORIES = [
     "Администрирование",
     "Прочее",
 ]
-
 PRIORITIES = ["Низкий", "Средний", "Высокий"]
 STATUSES = ["Новая", "В работе", "На паузе", "Выполнено"]
+EMPLOYEES = [f"Сотрудник {index}" for index in range(1, 6)]
+EMPLOYEE_SHEET_NAMES = [f"Сотрудник {index}" for index in range(1, len(EMPLOYEES) + 1)]
+EMPLOYEE_TAB_COLORS = [
+    "FF70AD47",
+    "FF5B9BD5",
+    "FFFFC000",
+    "FFED7D31",
+    "FF8064A2",
+]
+
+TASK_HEADERS = [
+    "ID",
+    "Дата постановки",
+    "Задача",
+    "Категория",
+    "Ответственный",
+    "Приоритет",
+    "Статус",
+    "Срок",
+    "Осталось дней",
+    "Просрочено",
+    "Комментарий",
+]
+TASK_COLUMN_WIDTHS = [8, 16, 40, 18, 20, 12, 14, 14, 14, 12, 32]
+
+TASK_TITLE_ROW = 1
+TASK_HEADER_ROW = 2
+TASK_FIRST_DATA_ROW = 3
+TASK_LAST_DATA_ROW = TASK_FIRST_DATA_ROW + MAX_TASK_ROWS - 1
+
+SETTINGS_TITLE_ROW = 1
+SETTINGS_HEADER_ROW = 2
+SETTINGS_FIRST_ITEM_ROW = 3
+
+EMPLOYEE_INFO_ROW = 1
+EMPLOYEE_NOTE_ROW = 2
+EMPLOYEE_HEADER_ROW = 4
+EMPLOYEE_FIRST_DATA_ROW = 5
+EMPLOYEE_LAST_DATA_ROW = EMPLOYEE_FIRST_DATA_ROW + MAX_EMPLOYEE_VIEW_ROWS - 1
+
+
+def quoted_sheet_name(sheet_name: str) -> str:
+    return f"'{sheet_name}'"
 
 
 def inline_string_cell(ref: str, value: str, style_id: int = 0) -> str:
@@ -60,47 +109,89 @@ def row_xml(
     )
 
 
-def column_widths_xml(widths: list[float]) -> str:
+def column_widths_xml(
+    widths: list[float],
+    *,
+    hidden_columns: set[int] | None = None,
+) -> str:
+    hidden_columns = hidden_columns or set()
     columns = []
     for index, width in enumerate(widths, start=1):
+        hidden_attr = ' hidden="1"' if index in hidden_columns else ""
         columns.append(
-            f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'
+            f'<col min="{index}" max="{index}" width="{width}" customWidth="1"{hidden_attr}/>'
         )
     return "".join(columns)
 
 
-def build_tasks_sheet() -> str:
-    headers = [
-        "ID",
-        "Дата постановки",
-        "Задача",
-        "Категория",
-        "Ответственный",
-        "Приоритет",
-        "Статус",
-        "Срок",
-        "Осталось дней",
-        "Просрочено",
-        "Комментарий",
-    ]
+def merge_cells_xml(ranges: list[str]) -> str:
+    if not ranges:
+        return ""
+    return (
+        f'<mergeCells count="{len(ranges)}">'
+        + "".join(f'<mergeCell ref="{cell_range}"/>' for cell_range in ranges)
+        + "</mergeCells>"
+    )
 
+
+def sheet_pr_xml(tab_color: str | None = None) -> str:
+    if not tab_color:
+        return ""
+    return f'<sheetPr><tabColor rgb="{tab_color}"/></sheetPr>'
+
+
+def build_status_conditional_formatting(start_row: int, end_row: int) -> str:
+    return f"""
+  <conditionalFormatting sqref="A{start_row}:K{end_row}">
+    <cfRule type="expression" dxfId="0" priority="1" stopIfTrue="1">
+      <formula>AND($J{start_row}="Да",$C{start_row}&lt;&gt;"")</formula>
+    </cfRule>
+    <cfRule type="expression" dxfId="1" priority="2">
+      <formula>$G{start_row}="Новая"</formula>
+    </cfRule>
+    <cfRule type="expression" dxfId="2" priority="3">
+      <formula>$G{start_row}="В работе"</formula>
+    </cfRule>
+    <cfRule type="expression" dxfId="3" priority="4">
+      <formula>$G{start_row}="На паузе"</formula>
+    </cfRule>
+    <cfRule type="expression" dxfId="4" priority="5">
+      <formula>$G{start_row}="Выполнено"</formula>
+    </cfRule>
+  </conditionalFormatting>
+""".strip()
+
+
+def build_tasks_sheet() -> str:
     rows = [
         row_xml(
-            1,
-            [inline_string_cell(f"{column}1", header, 1) for column, header in zip("ABCDEFGHIJK", headers)],
+            TASK_TITLE_ROW,
+            [
+                inline_string_cell("A1", "Трекер офисных задач", 5),
+                *[blank_cell(f"{column}1", 5) for column in "BCDEFGHIJK"],
+            ],
             "1:11",
-            height=24,
-        )
+            height=28,
+        ),
+        row_xml(
+            TASK_HEADER_ROW,
+            [
+                inline_string_cell(f"{column}{TASK_HEADER_ROW}", header, 1)
+                for column, header in zip("ABCDEFGHIJK", TASK_HEADERS)
+            ],
+            "1:11",
+            height=22,
+        ),
     ]
 
-    for row_number in range(2, 202):
+    for row_number in range(TASK_FIRST_DATA_ROW, TASK_LAST_DATA_ROW + 1):
         rows.append(
             row_xml(
                 row_number,
                 [
                     formula_cell(
                         f"A{row_number}",
-                        f'IF(C{row_number}="","",ROW()-1)',
+                        f'IF(C{row_number}="","",ROW()-{TASK_HEADER_ROW})',
                         4,
                     ),
                     blank_cell(f"B{row_number}", 3),
@@ -130,35 +221,39 @@ def build_tasks_sheet() -> str:
             )
         )
 
-    data_validations = """
-    <dataValidations count="3">
-      <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="D2:D201">
-        <formula1>task_categories</formula1>
-      </dataValidation>
-      <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="F2:F201">
-        <formula1>task_priorities</formula1>
-      </dataValidation>
-      <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="G2:G201">
-        <formula1>task_statuses</formula1>
-      </dataValidation>
-    </dataValidations>
-    """.strip()
-
-    columns = column_widths_xml([8, 16, 38, 18, 20, 12, 14, 14, 14, 12, 30])
+    data_validations = f"""
+  <dataValidations count="4">
+    <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="D{TASK_FIRST_DATA_ROW}:D{TASK_LAST_DATA_ROW}">
+      <formula1>task_categories</formula1>
+    </dataValidation>
+    <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="E{TASK_FIRST_DATA_ROW}:E{TASK_LAST_DATA_ROW}">
+      <formula1>task_employees</formula1>
+    </dataValidation>
+    <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="F{TASK_FIRST_DATA_ROW}:F{TASK_LAST_DATA_ROW}">
+      <formula1>task_priorities</formula1>
+    </dataValidation>
+    <dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="G{TASK_FIRST_DATA_ROW}:G{TASK_LAST_DATA_ROW}">
+      <formula1>task_statuses</formula1>
+    </dataValidation>
+  </dataValidations>
+""".strip()
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:K201"/>
+  {sheet_pr_xml("FF2F75B5")}
+  <dimension ref="A1:K{TASK_LAST_DATA_ROW}"/>
   <sheetViews>
     <sheetView workbookViewId="0">
-      <pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>
-      <selection pane="bottomLeft" activeCell="A2" sqref="A2"/>
+      <pane ySplit="2" topLeftCell="A{TASK_FIRST_DATA_ROW}" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A{TASK_FIRST_DATA_ROW}" sqref="A{TASK_FIRST_DATA_ROW}"/>
     </sheetView>
   </sheetViews>
-  <sheetFormatPr defaultRowHeight="18"/>
-  <cols>{columns}</cols>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{column_widths_xml(TASK_COLUMN_WIDTHS)}</cols>
   <sheetData>{''.join(rows)}</sheetData>
-  <autoFilter ref="A1:K201"/>
+  <autoFilter ref="A{TASK_HEADER_ROW}:K{TASK_LAST_DATA_ROW}"/>
+  {merge_cells_xml(["A1:K1"])}
+  {build_status_conditional_formatting(TASK_FIRST_DATA_ROW, TASK_LAST_DATA_ROW)}
   {data_validations}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
@@ -166,17 +261,43 @@ def build_tasks_sheet() -> str:
 
 
 def build_summary_sheet() -> str:
+    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
+    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
     metrics = [
-        ("Всего задач", "COUNTA('Задачи'!$C$2:$C$201)"),
-        ("Новая", 'COUNTIF(\'Задачи\'!$G$2:$G$201,"Новая")'),
-        ("В работе", 'COUNTIF(\'Задачи\'!$G$2:$G$201,"В работе")'),
-        ("На паузе", 'COUNTIF(\'Задачи\'!$G$2:$G$201,"На паузе")'),
-        ("Выполнено", 'COUNTIF(\'Задачи\'!$G$2:$G$201,"Выполнено")'),
-        ("Просрочено", 'COUNTIF(\'Задачи\'!$J$2:$J$201,"Да")'),
-        ("Высокий приоритет", 'COUNTIF(\'Задачи\'!$F$2:$F$201,"Высокий")'),
+        (
+            "Всего задач",
+            f"COUNTA({tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW})",
+        ),
+        (
+            "Новая",
+            f'COUNTIF({tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"Новая")',
+        ),
+        (
+            "В работе",
+            f'COUNTIF({tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"В работе")',
+        ),
+        (
+            "На паузе",
+            f'COUNTIF({tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"На паузе")',
+        ),
+        (
+            "Выполнено",
+            f'COUNTIF({tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"Выполнено")',
+        ),
+        (
+            "Просрочено",
+            f'COUNTIF({tasks_sheet}!$J${TASK_FIRST_DATA_ROW}:$J${TASK_LAST_DATA_ROW},"Да")',
+        ),
+        (
+            "Высокий приоритет",
+            f'COUNTIF({tasks_sheet}!$F${TASK_FIRST_DATA_ROW}:$F${TASK_LAST_DATA_ROW},"Высокий")',
+        ),
         (
             "Срок сегодня",
-            'COUNTIFS(\'Задачи\'!$H$2:$H$201,TODAY(),\'Задачи\'!$G$2:$G$201,"<>Выполнено")',
+            (
+                f'COUNTIFS({tasks_sheet}!$H${TASK_FIRST_DATA_ROW}:$H${TASK_LAST_DATA_ROW},TODAY(),'
+                f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"<>Выполнено")'
+            ),
         ),
     ]
 
@@ -184,88 +305,360 @@ def build_summary_sheet() -> str:
         row_xml(
             1,
             [
-                inline_string_cell("A1", "Показатель", 1),
-                inline_string_cell("B1", "Значение", 1),
+                inline_string_cell("A1", "Сводка по задачам", 5),
+                *[blank_cell(f"{column}1", 5) for column in "BCDEFG"],
             ],
-            "1:2",
+            "1:7",
+            height=28,
+        ),
+        row_xml(
+            2,
+            [
+                inline_string_cell(
+                    "A2",
+                    "Редактируйте список сотрудников на вкладке «Настройки», и показатели пересчитаются автоматически.",
+                    6,
+                ),
+                *[blank_cell(f"{column}2", 6) for column in "BCDEFG"],
+            ],
+            "1:7",
             height=24,
-        )
+        ),
+        row_xml(
+            3,
+            [
+                inline_string_cell("A3", "Показатель", 1),
+                inline_string_cell("B3", "Значение", 1),
+                blank_cell("C3"),
+                inline_string_cell("D3", "Сотрудник", 1),
+                inline_string_cell("E3", "Всего", 1),
+                inline_string_cell("F3", "В работе", 1),
+                inline_string_cell("G3", "Просрочено", 1),
+            ],
+            "1:7",
+            height=22,
+        ),
     ]
 
-    for row_number, (label, formula) in enumerate(metrics, start=2):
-        rows.append(
-            row_xml(
-                row_number,
+    table_height = max(len(metrics), len(EMPLOYEES))
+    for offset in range(table_height):
+        row_number = 4 + offset
+        cells = []
+        if offset < len(metrics):
+            label, formula = metrics[offset]
+            cells.append(inline_string_cell(f"A{row_number}", label, 6))
+            cells.append(formula_cell(f"B{row_number}", formula, 7))
+        else:
+            cells.append(blank_cell(f"A{row_number}"))
+            cells.append(blank_cell(f"B{row_number}"))
+
+        cells.append(blank_cell(f"C{row_number}"))
+
+        if offset < len(EMPLOYEES):
+            settings_row = SETTINGS_FIRST_ITEM_ROW + offset
+            cells.extend(
                 [
-                    inline_string_cell(f"A{row_number}", label, 2),
-                    formula_cell(f"B{row_number}", formula, 4),
-                ],
-                "1:2",
+                    formula_cell(
+                        f"D{row_number}",
+                        f"{settings_sheet}!$D${settings_row}",
+                        2,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"E{row_number}",
+                        (
+                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
+                            f'D{row_number},{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>")'
+                        ),
+                        7,
+                    ),
+                    formula_cell(
+                        f"F{row_number}",
+                        (
+                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
+                            f'D{row_number},{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"В работе")'
+                        ),
+                        7,
+                    ),
+                    formula_cell(
+                        f"G{row_number}",
+                        (
+                            f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},'
+                            f'D{row_number},{tasks_sheet}!$J${TASK_FIRST_DATA_ROW}:$J${TASK_LAST_DATA_ROW},"Да")'
+                        ),
+                        7,
+                    ),
+                ]
             )
-        )
+        else:
+            cells.extend(
+                [
+                    blank_cell(f"D{row_number}"),
+                    blank_cell(f"E{row_number}"),
+                    blank_cell(f"F{row_number}"),
+                    blank_cell(f"G{row_number}"),
+                ]
+            )
 
-    columns = column_widths_xml([24, 16])
+        rows.append(row_xml(row_number, cells, "1:7"))
 
+    last_row = 3 + table_height
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:B9"/>
+  {sheet_pr_xml("FF8064A2")}
+  <dimension ref="A1:G{last_row}"/>
   <sheetViews>
-    <sheetView workbookViewId="0"/>
+    <sheetView workbookViewId="0">
+      <pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A4" sqref="A4"/>
+    </sheetView>
   </sheetViews>
-  <sheetFormatPr defaultRowHeight="18"/>
-  <cols>{columns}</cols>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{column_widths_xml([24, 14, 3, 20, 12, 14, 12])}</cols>
   <sheetData>{''.join(rows)}</sheetData>
+  {merge_cells_xml(["A1:G1", "A2:G2"])}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
 
 
-def build_lists_sheet() -> str:
+def build_settings_sheet() -> str:
     rows = [
         row_xml(
-            1,
+            SETTINGS_TITLE_ROW,
             [
-                inline_string_cell("A1", "Категории", 1),
-                inline_string_cell("B1", "Приоритеты", 1),
-                inline_string_cell("C1", "Статусы", 1),
+                inline_string_cell("A1", "Настройки и справочники", 5),
+                blank_cell("B1", 5),
+                blank_cell("C1", 5),
+                blank_cell("D1", 5),
             ],
-            "1:3",
-            height=24,
-        )
+            "1:4",
+            height=28,
+        ),
+        row_xml(
+            SETTINGS_HEADER_ROW,
+            [
+                inline_string_cell("A2", "Категории", 1),
+                inline_string_cell("B2", "Приоритеты", 1),
+                inline_string_cell("C2", "Статусы", 1),
+                inline_string_cell("D2", "Сотрудники", 1),
+            ],
+            "1:4",
+            height=22,
+        ),
     ]
 
-    max_items = max(len(CATEGORIES), len(PRIORITIES), len(STATUSES))
+    max_items = max(len(CATEGORIES), len(PRIORITIES), len(STATUSES), len(EMPLOYEES))
     for offset in range(max_items):
-        row_number = offset + 2
-        cells = []
-        cells.append(
-            inline_string_cell(f"A{row_number}", CATEGORIES[offset], 2)
-            if offset < len(CATEGORIES)
-            else blank_cell(f"A{row_number}", 2)
-        )
-        cells.append(
-            inline_string_cell(f"B{row_number}", PRIORITIES[offset], 2)
-            if offset < len(PRIORITIES)
-            else blank_cell(f"B{row_number}", 2)
-        )
-        cells.append(
-            inline_string_cell(f"C{row_number}", STATUSES[offset], 2)
-            if offset < len(STATUSES)
-            else blank_cell(f"C{row_number}", 2)
-        )
-        rows.append(row_xml(row_number, cells, "1:3"))
+        row_number = SETTINGS_FIRST_ITEM_ROW + offset
+        cells = [
+            (
+                inline_string_cell(f"A{row_number}", CATEGORIES[offset], 2)
+                if offset < len(CATEGORIES)
+                else blank_cell(f"A{row_number}", 2)
+            ),
+            (
+                inline_string_cell(f"B{row_number}", PRIORITIES[offset], 4)
+                if offset < len(PRIORITIES)
+                else blank_cell(f"B{row_number}", 4)
+            ),
+            (
+                inline_string_cell(f"C{row_number}", STATUSES[offset], 4)
+                if offset < len(STATUSES)
+                else blank_cell(f"C{row_number}", 4)
+            ),
+            (
+                inline_string_cell(f"D{row_number}", EMPLOYEES[offset], 2)
+                if offset < len(EMPLOYEES)
+                else blank_cell(f"D{row_number}", 2)
+            ),
+        ]
+        rows.append(row_xml(row_number, cells, "1:4"))
 
-    columns = column_widths_xml([22, 14, 16])
+    last_row = SETTINGS_FIRST_ITEM_ROW + max_items - 1
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  {sheet_pr_xml("FF7F7F7F")}
+  <dimension ref="A1:D{last_row}"/>
+  <sheetViews>
+    <sheetView workbookViewId="0">
+      <pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A3" sqref="A3"/>
+    </sheetView>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{column_widths_xml([24, 14, 16, 20])}</cols>
+  <sheetData>{''.join(rows)}</sheetData>
+  <autoFilter ref="A2:D{last_row}"/>
+  {merge_cells_xml(["A1:D1"])}
+  <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
+</worksheet>
+"""
+
+
+def employee_source_row_formula(row_number: int) -> str:
+    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
+    return (
+        f'IFERROR(AGGREGATE(15,6,ROW({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW})/'
+        f'(({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW}=$B$1)'
+        f'*({tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW}<>"")),'
+        f'ROWS($L${EMPLOYEE_FIRST_DATA_ROW}:L{row_number})),"")'
+    )
+
+
+def employee_task_formula(row_number: int, column_letter: str) -> str:
+    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
+    return (
+        f'IF($L{row_number}="","",INDEX({tasks_sheet}!${column_letter}:${column_letter},$L{row_number}))'
+    )
+
+
+def build_employee_sheet(sheet_index: int) -> str:
+    tasks_sheet = quoted_sheet_name(TASKS_SHEET_NAME)
+    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
+    employee_settings_row = SETTINGS_FIRST_ITEM_ROW + sheet_index
+    instruction = (
+        "Лист автоматически показывает задачи из вкладки "
+        "«Задачи» по полю «Ответственный»."
+    )
+
+    rows = [
+        row_xml(
+            EMPLOYEE_INFO_ROW,
+            [
+                inline_string_cell("A1", "Сотрудник", 6),
+                formula_cell("B1", f"{settings_sheet}!$D${employee_settings_row}", 7, cell_type="str"),
+                blank_cell("C1", 7),
+                inline_string_cell("D1", "Активных задач", 6),
+                formula_cell(
+                    "E1",
+                    (
+                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
+                        f'{tasks_sheet}!$C${TASK_FIRST_DATA_ROW}:$C${TASK_LAST_DATA_ROW},"<>",'
+                        f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"<>Выполнено")'
+                    ),
+                    7,
+                ),
+                blank_cell("F1"),
+                inline_string_cell("G1", "Просрочено", 6),
+                formula_cell(
+                    "H1",
+                    (
+                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
+                        f'{tasks_sheet}!$J${TASK_FIRST_DATA_ROW}:$J${TASK_LAST_DATA_ROW},"Да")'
+                    ),
+                    7,
+                ),
+                blank_cell("I1"),
+                inline_string_cell("J1", "Выполнено", 6),
+                formula_cell(
+                    "K1",
+                    (
+                        f'COUNTIFS({tasks_sheet}!$E${TASK_FIRST_DATA_ROW}:$E${TASK_LAST_DATA_ROW},$B$1,'
+                        f'{tasks_sheet}!$G${TASK_FIRST_DATA_ROW}:$G${TASK_LAST_DATA_ROW},"Выполнено")'
+                    ),
+                    7,
+                ),
+                blank_cell("L1"),
+            ],
+            "1:12",
+            height=24,
+        ),
+        row_xml(
+            EMPLOYEE_NOTE_ROW,
+            [
+                inline_string_cell("A2", instruction, 6),
+                *[blank_cell(f"{column}2", 6) for column in "BCDEFGHIJK"],
+                blank_cell("L2"),
+            ],
+            "1:12",
+            height=24,
+        ),
+        row_xml(3, [], "1:12", height=8),
+        row_xml(
+            EMPLOYEE_HEADER_ROW,
+            [
+                inline_string_cell(f"{column}{EMPLOYEE_HEADER_ROW}", header, 1)
+                for column, header in zip("ABCDEFGHIJK", TASK_HEADERS)
+            ],
+            "1:12",
+            height=22,
+        ),
+    ]
+
+    for row_number in range(EMPLOYEE_FIRST_DATA_ROW, EMPLOYEE_LAST_DATA_ROW + 1):
+        rows.append(
+            row_xml(
+                row_number,
+                [
+                    formula_cell(f"A{row_number}", employee_task_formula(row_number, "A"), 4),
+                    formula_cell(f"B{row_number}", employee_task_formula(row_number, "B"), 3),
+                    formula_cell(
+                        f"C{row_number}",
+                        employee_task_formula(row_number, "C"),
+                        2,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"D{row_number}",
+                        employee_task_formula(row_number, "D"),
+                        2,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"E{row_number}",
+                        employee_task_formula(row_number, "E"),
+                        2,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"F{row_number}",
+                        employee_task_formula(row_number, "F"),
+                        4,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"G{row_number}",
+                        employee_task_formula(row_number, "G"),
+                        4,
+                        cell_type="str",
+                    ),
+                    formula_cell(f"H{row_number}", employee_task_formula(row_number, "H"), 3),
+                    formula_cell(f"I{row_number}", employee_task_formula(row_number, "I"), 4),
+                    formula_cell(
+                        f"J{row_number}",
+                        employee_task_formula(row_number, "J"),
+                        4,
+                        cell_type="str",
+                    ),
+                    formula_cell(
+                        f"K{row_number}",
+                        employee_task_formula(row_number, "K"),
+                        2,
+                        cell_type="str",
+                    ),
+                    formula_cell(f"L{row_number}", employee_source_row_formula(row_number)),
+                ],
+                "1:12",
+            )
+        )
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:C7"/>
+  {sheet_pr_xml(EMPLOYEE_TAB_COLORS[sheet_index % len(EMPLOYEE_TAB_COLORS)])}
+  <dimension ref="A1:L{EMPLOYEE_LAST_DATA_ROW}"/>
   <sheetViews>
-    <sheetView workbookViewId="0"/>
+    <sheetView workbookViewId="0">
+      <pane ySplit="4" topLeftCell="A{EMPLOYEE_FIRST_DATA_ROW}" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A{EMPLOYEE_FIRST_DATA_ROW}" sqref="A{EMPLOYEE_FIRST_DATA_ROW}"/>
+    </sheetView>
   </sheetViews>
-  <sheetFormatPr defaultRowHeight="18"/>
-  <cols>{columns}</cols>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{column_widths_xml(TASK_COLUMN_WIDTHS + [4], hidden_columns={12})}</cols>
   <sheetData>{''.join(rows)}</sheetData>
+  <autoFilter ref="A{EMPLOYEE_HEADER_ROW}:K{EMPLOYEE_LAST_DATA_ROW}"/>
+  {merge_cells_xml(["B1:C1", "A2:K2"])}
+  {build_status_conditional_formatting(EMPLOYEE_FIRST_DATA_ROW, EMPLOYEE_LAST_DATA_ROW)}
   <pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
 </worksheet>
 """
@@ -277,7 +670,7 @@ def build_styles() -> str:
   <numFmts count="1">
     <numFmt numFmtId="164" formatCode="dd.mm.yyyy"/>
   </numFmts>
-  <fonts count="2">
+  <fonts count="4">
     <font>
       <sz val="11"/>
       <name val="Calibri"/>
@@ -290,14 +683,46 @@ def build_styles() -> str:
       <name val="Calibri"/>
       <family val="2"/>
     </font>
+    <font>
+      <b/>
+      <sz val="11"/>
+      <color rgb="FF1F1F1F"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+    </font>
+    <font>
+      <b/>
+      <sz val="14"/>
+      <color rgb="FFFFFFFF"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+    </font>
   </fonts>
-  <fills count="3">
+  <fills count="6">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill>
       <patternFill patternType="solid">
         <fgColor rgb="FF1F4E78"/>
         <bgColor rgb="FF1F4E78"/>
+      </patternFill>
+    </fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FF4F81BD"/>
+        <bgColor rgb="FF4F81BD"/>
+      </patternFill>
+    </fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FFDEEAF6"/>
+        <bgColor rgb="FFDEEAF6"/>
+      </patternFill>
+    </fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FFFDF2CC"/>
+        <bgColor rgb="FFFDF2CC"/>
       </patternFill>
     </fill>
   </fills>
@@ -316,7 +741,7 @@ def build_styles() -> str:
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
   </cellStyleXfs>
-  <cellXfs count="5">
+  <cellXfs count="8">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
       <alignment horizontal="center" vertical="center"/>
@@ -330,26 +755,85 @@ def build_styles() -> str:
     <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1">
       <alignment horizontal="center" vertical="center" wrapText="1"/>
     </xf>
+    <xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center"/>
+    </xf>
+    <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center" wrapText="1"/>
+    </xf>
+    <xf numFmtId="0" fontId="2" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center" wrapText="1"/>
+    </xf>
   </cellXfs>
   <cellStyles count="1">
     <cellStyle name="Normal" xfId="0" builtinId="0"/>
   </cellStyles>
-  <dxfs count="0"/>
+  <dxfs count="5">
+    <dxf>
+      <font><color rgb="FF9C0006"/></font>
+      <fill>
+        <patternFill patternType="solid">
+          <fgColor rgb="FFFFC7CE"/>
+          <bgColor rgb="FFFFC7CE"/>
+        </patternFill>
+      </fill>
+    </dxf>
+    <dxf>
+      <font><color rgb="FF1F4E78"/></font>
+      <fill>
+        <patternFill patternType="solid">
+          <fgColor rgb="FFEAF3FF"/>
+          <bgColor rgb="FFEAF3FF"/>
+        </patternFill>
+      </fill>
+    </dxf>
+    <dxf>
+      <font><color rgb="FF7F6000"/></font>
+      <fill>
+        <patternFill patternType="solid">
+          <fgColor rgb="FFFFF2CC"/>
+          <bgColor rgb="FFFFF2CC"/>
+        </patternFill>
+      </fill>
+    </dxf>
+    <dxf>
+      <font><color rgb="FFC65911"/></font>
+      <fill>
+        <patternFill patternType="solid">
+          <fgColor rgb="FFFCE4D6"/>
+          <bgColor rgb="FFFCE4D6"/>
+        </patternFill>
+      </fill>
+    </dxf>
+    <dxf>
+      <font><color rgb="FF385723"/></font>
+      <fill>
+        <patternFill patternType="solid">
+          <fgColor rgb="FFE2F0D9"/>
+          <bgColor rgb="FFE2F0D9"/>
+        </patternFill>
+      </fill>
+    </dxf>
+  </dxfs>
   <tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
 </styleSheet>
 """
 
 
-def build_content_types() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def build_content_types(sheet_count: int) -> str:
+    sheet_overrides = "".join(
+        (
+            '  <Override PartName="/xl/worksheets/sheet'
+            f'{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
+        )
+        for index in range(1, sheet_count + 1)
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+{sheet_overrides}  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>
@@ -366,34 +850,45 @@ def build_root_relationships() -> str:
 """
 
 
-def build_workbook() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def build_workbook(sheet_names: list[str]) -> str:
+    settings_sheet = quoted_sheet_name(SETTINGS_SHEET_NAME)
+    sheets_xml = "\n".join(
+        f'    <sheet name="{escape(sheet_name)}" sheetId="{index}" r:id="rId{index}"/>'
+        for index, sheet_name in enumerate(sheet_names, start=1)
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <bookViews>
     <workbookView xWindow="0" yWindow="0" windowWidth="24000" windowHeight="14805"/>
   </bookViews>
   <sheets>
-    <sheet name="Задачи" sheetId="1" r:id="rId1"/>
-    <sheet name="Сводка" sheetId="2" r:id="rId2"/>
-    <sheet name="Списки" sheetId="3" state="hidden" r:id="rId3"/>
+{sheets_xml}
   </sheets>
   <definedNames>
-    <definedName name="task_categories">'Списки'!$A$2:$A$7</definedName>
-    <definedName name="task_priorities">'Списки'!$B$2:$B$4</definedName>
-    <definedName name="task_statuses">'Списки'!$C$2:$C$5</definedName>
+    <definedName name="task_categories">{settings_sheet}!$A${SETTINGS_FIRST_ITEM_ROW}:$A${SETTINGS_FIRST_ITEM_ROW + len(CATEGORIES) - 1}</definedName>
+    <definedName name="task_priorities">{settings_sheet}!$B${SETTINGS_FIRST_ITEM_ROW}:$B${SETTINGS_FIRST_ITEM_ROW + len(PRIORITIES) - 1}</definedName>
+    <definedName name="task_statuses">{settings_sheet}!$C${SETTINGS_FIRST_ITEM_ROW}:$C${SETTINGS_FIRST_ITEM_ROW + len(STATUSES) - 1}</definedName>
+    <definedName name="task_employees">{settings_sheet}!$D${SETTINGS_FIRST_ITEM_ROW}:$D${SETTINGS_FIRST_ITEM_ROW + len(EMPLOYEES) - 1}</definedName>
   </definedNames>
   <calcPr calcId="171027" fullCalcOnLoad="1"/>
 </workbook>
 """
 
 
-def build_workbook_relationships() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def build_workbook_relationships(sheet_count: int) -> str:
+    sheet_relationships = "\n".join(
+        (
+            f'  <Relationship Id="rId{index}" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            f'Target="worksheets/sheet{index}.xml"/>'
+        )
+        for index in range(1, sheet_count + 1)
+    )
+    styles_relationship_id = sheet_count + 1
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>
-  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+{sheet_relationships}
+  <Relationship Id="rId{styles_relationship_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>
 """
 
@@ -416,8 +911,11 @@ def build_core_properties() -> str:
 """
 
 
-def build_app_properties() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def build_app_properties(sheet_names: list[str]) -> str:
+    titles = "\n".join(
+        f"      <vt:lpstr>{escape(sheet_name)}</vt:lpstr>" for sheet_name in sheet_names
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties
   xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
   xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
@@ -427,14 +925,12 @@ def build_app_properties() -> str:
   <HeadingPairs>
     <vt:vector size="2" baseType="variant">
       <vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant>
-      <vt:variant><vt:i4>3</vt:i4></vt:variant>
+      <vt:variant><vt:i4>{len(sheet_names)}</vt:i4></vt:variant>
     </vt:vector>
   </HeadingPairs>
   <TitlesOfParts>
-    <vt:vector size="3" baseType="lpstr">
-      <vt:lpstr>Задачи</vt:lpstr>
-      <vt:lpstr>Сводка</vt:lpstr>
-      <vt:lpstr>Списки</vt:lpstr>
+    <vt:vector size="{len(sheet_names)}" baseType="lpstr">
+{titles}
     </vt:vector>
   </TitlesOfParts>
   <Company></Company>
@@ -447,17 +943,36 @@ def build_app_properties() -> str:
 
 
 def write_workbook(output_path: Path) -> None:
+    sheet_names = [
+        TASKS_SHEET_NAME,
+        SUMMARY_SHEET_NAME,
+        SETTINGS_SHEET_NAME,
+        *EMPLOYEE_SHEET_NAMES,
+    ]
+    worksheets = [
+        build_tasks_sheet(),
+        build_summary_sheet(),
+        build_settings_sheet(),
+        *[build_employee_sheet(index) for index in range(len(EMPLOYEE_SHEET_NAMES))],
+    ]
+
     with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as workbook:
-        workbook.writestr("[Content_Types].xml", build_content_types())
+        workbook.writestr("[Content_Types].xml", build_content_types(len(worksheets)))
         workbook.writestr("_rels/.rels", build_root_relationships())
         workbook.writestr("docProps/core.xml", build_core_properties())
-        workbook.writestr("docProps/app.xml", build_app_properties())
-        workbook.writestr("xl/workbook.xml", build_workbook())
-        workbook.writestr("xl/_rels/workbook.xml.rels", build_workbook_relationships())
+        workbook.writestr("docProps/app.xml", build_app_properties(sheet_names))
+        workbook.writestr("xl/workbook.xml", build_workbook(sheet_names))
+        workbook.writestr(
+            "xl/_rels/workbook.xml.rels",
+            build_workbook_relationships(len(worksheets)),
+        )
         workbook.writestr("xl/styles.xml", build_styles())
-        workbook.writestr("xl/worksheets/sheet1.xml", build_tasks_sheet())
-        workbook.writestr("xl/worksheets/sheet2.xml", build_summary_sheet())
-        workbook.writestr("xl/worksheets/sheet3.xml", build_lists_sheet())
+
+        for sheet_index, worksheet_xml in enumerate(worksheets, start=1):
+            workbook.writestr(
+                f"xl/worksheets/sheet{sheet_index}.xml",
+                worksheet_xml,
+            )
 
 
 def main() -> None:
